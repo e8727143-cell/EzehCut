@@ -4,11 +4,9 @@ from fastapi.responses import StreamingResponse
 from pydub import AudioSegment
 from pydub.silence import split_on_silence
 import io
-import logging
-
-# Configuración de logs para monitorear el proceso en Render
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("EzehCut-Optimizer")
+import json
+import asyncio
+import base64
 
 app = FastAPI()
 
@@ -21,50 +19,48 @@ app.add_middleware(
 
 @app.post("/process-audio")
 async def process_audio(file: UploadFile = File(...)):
-    try:
-        logger.info(f"Iniciando procesamiento de archivo pesado: {file.filename}")
-        
-        # 1. Leer el archivo a un buffer temporal
-        file_content = await file.read()
-        audio = AudioSegment.from_file(io.BytesIO(file_content))
-        
-        # 2. Definir tamaño del segmento (10 minutos para seguridad de RAM)
-        ten_minutes = 10 * 60 * 1000 
-        audio_length = len(audio)
-        combined = AudioSegment.empty()
-
-        logger.info(f"Duración total: {audio_length / 60000:.2f} minutos. Procesando por segmentos...")
-
-        # 3. Procesamiento por segmentos para no saturar los 512MB de RAM
-        for i in range(0, audio_length, ten_minutes):
-            end = min(i + ten_minutes, audio_length)
-            chunk_to_process = audio[i:end]
+    async def event_generator():
+        try:
+            # 1. Inicio
+            yield f"data: {json.dumps({'status': 'Cargando archivo a memoria...', 'progress': 5})}\n\n"
+            content = await file.read()
+            audio = AudioSegment.from_file(io.BytesIO(content))
             
-            # Aplicar lógica de EzehCUT a este fragmento
-            processed_chunks = split_on_silence(
-                chunk_to_process,
-                min_silence_len=700,
-                silence_thresh=-35,
-                keep_silence=200
-            )
+            ten_minutes = 10 * 60 * 1000
+            audio_length = len(audio)
+            num_chunks = (audio_length // ten_minutes) + 1
+            combined = AudioSegment.empty()
+
+            yield f"data: {json.dumps({'status': f'Audio detectado: {audio_length/60000:.1f} min. Dividiendo en {num_chunks} partes...', 'progress': 10})}\n\n"
+
+            # 2. Procesamiento por partes
+            for i in range(0, audio_length, ten_minutes):
+                chunk_idx = (i // ten_minutes) + 1
+                progress = 10 + int((chunk_idx / num_chunks) * 70)
+                
+                yield f"data: {json.dumps({'status': f'Quitando silencios de Parte {chunk_idx}/{num_chunks}...', 'progress': progress})}\n\n"
+                
+                end = min(i + ten_minutes, audio_length)
+                current_chunk = audio[i:end]
+                
+                # Procesar silencio (Lógica EzehCUT)
+                processed = split_on_silence(current_chunk, min_silence_len=700, silence_thresh=-35, keep_silence=200)
+                
+                for p in processed:
+                    combined += p
+                
+                await asyncio.sleep(0.1) # Evitar bloqueo de event loop
+
+            # 3. Finalización
+            yield f"data: {json.dumps({'status': 'Uniendo partes y masterizando...', 'progress': 90})}\n\n"
             
-            for p_chunk in processed_chunks:
-                combined += p_chunk
-            
-            logger.info(f"Segmento {i//ten_minutes + 1} completado.")
+            output_buffer = io.BytesIO()
+            combined.export(output_buffer, format="mp3", bitrate="192k")
+            audio_64 = base64.b64encode(output_buffer.getvalue()).decode()
 
-        # 4. Exportar el resultado final
-        output_buffer = io.BytesIO()
-        combined.export(output_buffer, format="mp3", bitrate="192k")
-        output_buffer.seek(0)
+            yield f"data: {json.dumps({'status': '¡Proceso completado con éxito!', 'progress': 100, 'audio': audio_64})}\n\n"
 
-        logger.info("Procesamiento finalizado con éxito.")
-        return StreamingResponse(output_buffer, media_type="audio/mpeg")
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-    except Exception as e:
-        logger.error(f"Error procesando audio: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error interno al procesar audio pesado.")
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
