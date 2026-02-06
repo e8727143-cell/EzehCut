@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 
 app = FastAPI()
 
+# Configuración de CORS abierta para el Enjambre
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,12 +19,10 @@ app.add_middleware(
 async def process_audio(file: UploadFile = File(...)):
     async def event_generator():
         try:
-            # Notificación inmediata para mantener viva la conexión
-            yield f"data: {json.dumps({'status': '📥 Recibiendo segmento...', 'progress': 10})}\n\n"
-            
+            # Leemos el fragmento (aprox 1MB) directamente a memoria
             input_data = await file.read()
             
-            # Comando optimizado para velocidad máxima
+            # COMANDO FFmpeg: Optimizado para procesar por tuberías (pipes) sin tocar el disco
             cmd = [
                 "ffmpeg", "-i", "pipe:0",
                 "-af", "silenceremove=start_periods=1:start_threshold=-35dB:stop_periods=-1:stop_threshold=-35dB:stop_duration=0.7",
@@ -37,17 +36,23 @@ async def process_audio(file: UploadFile = File(...)):
                 stderr=asyncio.subprocess.PIPE
             )
             
-            yield f"data: {json.dumps({'status': '✂️ Eliminando silencios...', 'progress': 50})}\n\n"
-            
+            # Ejecución paralela del proceso de audio
             stdout, stderr = await process.communicate(input=input_data)
 
             if process.returncode != 0:
-                yield f"data: {json.dumps({'error': 'Error en motor de audio'})}\n\n"
+                yield f"data: {json.dumps({'error': 'Fallo en el motor FFmpeg'})}\n\n"
                 return
 
-            yield f"data: {json.dumps({'status': '✅ Segmento procesado', 'progress': 100, 'audio': base64.b64encode(stdout).decode()})}\n\n"
+            # Enviamos el audio procesado codificado en Base64
+            # Al ser fragmentos de 1MB, el Base64 resultante es pequeño y viaja instantáneamente
+            audio_64 = base64.b64encode(stdout).decode()
+            yield f"data: {json.dumps({'audio': audio_64})}\n\n"
 
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=10000)
