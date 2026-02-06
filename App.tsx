@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Download, Scissors, AlertCircle, Loader2, Server, X, CheckCircle2, Clock, Activity, Zap, ShieldCheck, Cpu } from 'lucide-react';
+import { Upload, Download, Scissors, AlertCircle, CheckCircle2, Clock, Zap, ShieldCheck, Cpu } from 'lucide-react';
 
 const BACKEND_POOL = [
   'https://ezehcut.onrender.com', 
@@ -42,23 +42,19 @@ export default function App() {
     setSeconds(0);
     
     try {
-      setStatus('Preparando Motores de Fuerza Bruta...');
+      setStatus('ATACANDO ARCHIVO...');
       const arrayBuffer = await file.arrayBuffer();
-      // AUMENTO DE BLOQUE: 10MB para reducir latencia de red
-      const chunkSize = 10 * 1024 * 1024; 
+      const chunkSize = 10 * 1024 * 1024; // 10MB para aprovechar los 4GB de RAM total
       const totalChunks = Math.ceil(arrayBuffer.byteLength / chunkSize);
       const results = new Array(totalChunks);
       let completedChunks = 0;
 
-      // Procesador de cola para limitar a 2 conexiones simultáneas (más estable)
       const queue = [...Array(totalChunks).keys()];
-      const runners = Array(2).fill(null).map(async (_, runnerIdx) => {
+      const runners = Array(2).fill(null).map(async () => {
         while (queue.length > 0) {
           const chunkIdx = queue.shift();
           const serverIdx = chunkIdx % BACKEND_POOL.length;
-          const start = chunkIdx * chunkSize;
-          const end = Math.min(start + chunkSize, arrayBuffer.byteLength);
-          const chunkBlob = new Blob([arrayBuffer.slice(start, end)]);
+          const chunkBlob = new Blob([arrayBuffer.slice(chunkIdx * chunkSize, Math.min((chunkIdx + 1) * chunkSize, arrayBuffer.byteLength))]);
 
           setServerStatus(prev => {
             const next = [...prev];
@@ -70,11 +66,7 @@ export default function App() {
           formData.append('file', chunkBlob, 'chunk.mp3');
 
           try {
-            const response = await fetch(`${BACKEND_POOL[serverIdx]}/process-audio`, {
-              method: 'POST',
-              body: formData,
-            });
-
+            const response = await fetch(`${BACKEND_POOL[serverIdx]}/process-audio`, { method: 'POST', body: formData });
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let audioPart = '';
@@ -95,9 +87,9 @@ export default function App() {
 
             completedChunks++;
             setProgress(Math.round((completedChunks / totalChunks) * 100));
-            setStatus(`Procesado pesado: ${completedChunks}/${totalChunks}`);
+            setStatus(`LIMPIANDO: ${completedChunks}/${totalChunks}`);
           } catch (e) {
-            queue.push(chunkIdx); // Reintentar si falla
+            queue.push(chunkIdx);
           } finally {
             setServerStatus(prev => {
               const next = [...prev];
@@ -109,85 +101,79 @@ export default function App() {
       });
 
       await Promise.all(runners);
-
-      setStatus('Fusionando Núcleos...');
-      const totalLength = results.reduce((acc, curr) => acc + (curr ? curr.length : 0), 0);
-      const finalArray = new Uint8Array(totalLength);
+      setStatus('ENSAMBLANDO MASTER...');
+      
+      const finalArray = new Uint8Array(results.reduce((acc, curr) => acc + (curr ? curr.length : 0), 0));
       let offset = 0;
-      for (const res of results) {
-        if (res) {
-          finalArray.set(res, offset);
-          offset += res.length;
-        }
-      }
+      for (const res of results) { if (res) { finalArray.set(res, offset); offset += res.length; } }
 
       setProcessedBlobUrl(URL.createObjectURL(new Blob([finalArray], { type: 'audio/mpeg' })));
       setIsProcessing(false);
     } catch (err) {
-      setError("Fallo en la red del enjambre.");
+      setError("ERROR DE CONEXIÓN.");
       setIsProcessing(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-black text-white p-6 flex flex-col items-center justify-center font-sans">
-      <div className="w-full max-w-2xl bg-zinc-950 border border-zinc-900 rounded-[3rem] p-12 shadow-2xl relative">
+    <div className="min-h-screen bg-black text-white p-6 flex flex-col items-center justify-center font-sans uppercase">
+      <div className="w-full max-w-2xl bg-zinc-950 border-2 border-red-600/40 rounded-[3rem] p-12 shadow-[0_0_60px_rgba(220,38,38,0.15)] relative">
         <div className="flex justify-between items-start mb-12">
           <div className="flex items-center gap-3">
-            <Zap className="text-red-600" size={32} />
-            <h1 className="text-4xl font-black italic tracking-tighter uppercase">EzehCut <span className="text-red-600">V3.1</span></h1>
+            <Zap className="text-red-600 animate-pulse" size={32} />
+            <h1 className="text-4xl font-black italic tracking-tighter">EZEHCUT <span className="text-red-600">ULTRA</span></h1>
           </div>
-          <div className="bg-red-600/10 border border-red-600/40 px-4 py-2 rounded-2xl text-[10px] font-black text-red-500">
-             BRUTE FORCE MODE
+          <div className="flex flex-col items-end gap-1">
+             <div className="bg-red-600 px-3 py-1 rounded-full text-[10px] font-black italic shadow-[0_0_10px_red]">ALWAYS ACTIVE</div>
+             <div className="flex items-center gap-1 text-green-500 text-[9px] font-bold tracking-widest"><ShieldCheck size={10}/> 8 NODOS OK</div>
           </div>
         </div>
 
         <div className="space-y-8">
           {!isProcessing && !processedBlobUrl && (
-            <label className="border-2 border-dashed border-zinc-800 hover:border-red-600 rounded-[2.5rem] p-24 flex flex-col items-center justify-center cursor-pointer transition-all">
-              <Upload className="w-16 h-16 mb-4 text-zinc-800" />
-              <p className="text-zinc-500 font-bold uppercase tracking-widest text-sm">Cargar archivo de una hora</p>
+            <label className="border-2 border-dashed border-zinc-900 hover:border-red-600 rounded-[2.5rem] p-24 flex flex-col items-center justify-center cursor-pointer transition-all bg-zinc-900/10 group">
+              <Upload className="w-16 h-16 mb-4 text-zinc-800 group-hover:text-red-600 group-hover:-translate-y-2 transition-all" />
+              <p className="text-zinc-600 font-black tracking-widest text-xs">SOLTAR ARCHIVO AQUÍ</p>
               <input type="file" className="hidden" onChange={(e) => setFile(e.target.files[0])} />
             </label>
           )}
 
           {isProcessing && (
-            <div className="space-y-10">
-              <div className="grid grid-cols-4 gap-4">
+            <div className="space-y-10 animate-in fade-in">
+              <div className="grid grid-cols-8 gap-2">
                 {serverStatus.map((s, i) => (
-                  <div key={i} className={`h-12 rounded-xl border flex items-center justify-center ${s === 'working' ? 'bg-red-600 border-red-500 shadow-[0_0_10px_red]' : 'bg-zinc-900 border-zinc-800 opacity-30'}`}>
-                    <Cpu size={14} className={s === 'working' ? 'text-white animate-pulse' : 'text-zinc-700'} />
+                  <div key={i} className={`h-8 rounded-lg border flex items-center justify-center transition-all ${s === 'working' ? 'bg-red-600 border-red-400 shadow-[0_0_10px_red]' : 'bg-zinc-900 border-zinc-800 opacity-20'}`}>
+                    <Cpu size={12} className={s === 'working' ? 'text-white' : 'text-zinc-800'} />
                   </div>
                 ))}
               </div>
-              
               <div className="space-y-4">
-                <div className="flex justify-between font-black text-xs uppercase tracking-widest text-red-600 italic">
+                <div className="flex justify-between font-black text-[10px] text-red-600 tracking-[0.3em] italic">
                   <span>{status}</span>
                   <span>{formatTime(seconds)}</span>
                 </div>
-                <div className="w-full bg-zinc-900 h-6 rounded-full overflow-hidden p-1 border border-zinc-800">
-                  <div className="bg-red-600 h-full rounded-full transition-all duration-1000" style={{ width: `${progress}%` }} />
+                <div className="w-full bg-zinc-900 h-8 rounded-full overflow-hidden p-1.5 border border-zinc-800">
+                  <div className="bg-red-600 h-full rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
                 </div>
-                <div className="text-6xl font-black text-center tracking-tighter">{progress}%</div>
+                <div className="text-8xl font-black text-center tracking-tighter italic">{progress}%</div>
               </div>
             </div>
           )}
 
           {file && !isProcessing && !processedBlobUrl && (
-            <button onClick={processAudio} className="w-full py-7 bg-red-600 hover:bg-red-700 text-white font-black rounded-[2rem] text-2xl italic tracking-tighter">
-              EJECUTAR LIMPIEZA TOTAL
+            <button onClick={processAudio} className="w-full py-8 bg-red-600 hover:bg-red-700 text-white font-black rounded-[2rem] text-3xl italic shadow-2xl active:scale-95 transition-all">
+              TRITURAR SILENCIOS
             </button>
           )}
 
           {processedBlobUrl && (
-            <div className="text-center space-y-8 animate-in zoom-in-95">
-              <CheckCircle2 className="mx-auto text-green-500" size={64}/>
-              <h3 className="text-4xl font-black italic uppercase tracking-tighter">Proceso Exitoso</h3>
-              <a href={processedBlobUrl} download={`EzehCut_Final_${file?.name}`} className="flex items-center justify-center gap-4 w-full py-6 bg-white text-black font-black rounded-2xl text-xl">
-                <Download size={24} /> DESCARGAR AUDIO
+            <div className="text-center space-y-10 py-4 animate-in zoom-in-95">
+              <CheckCircle2 className="mx-auto text-green-500" size={80}/>
+              <h3 className="text-4xl font-black italic tracking-tighter">MISIÓN COMPLETADA</h3>
+              <a href={processedBlobUrl} download={`EzehCut_Ultra_${file?.name}`} className="flex items-center justify-center gap-4 w-full py-8 bg-white text-black font-black rounded-3xl text-2xl shadow-2xl hover:bg-zinc-200 transition-all">
+                <Download size={28} /> DESCARGAR MASTER
               </a>
-              <button onClick={() => {setFile(null); setProcessedBlobUrl(null);}} className="text-zinc-600 text-xs font-black uppercase underline decoration-red-600">Nuevo proceso</button>
+              <button onClick={() => {setFile(null); setProcessedBlobUrl(null); setProgress(0); setSeconds(0);}} className="text-zinc-600 text-xs font-black underline decoration-red-600 underline-offset-8">PROCESAR OTRO</button>
             </div>
           )}
         </div>
