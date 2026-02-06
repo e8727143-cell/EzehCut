@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Download, Scissors, AlertCircle, CheckCircle2, Clock, Zap, ShieldCheck, Cpu } from 'lucide-react';
+import { Upload, Download, Scissors, AlertCircle, CheckCircle2, Clock, Zap, ShieldCheck, Cpu, Activity, WifiOff } from 'lucide-react';
 
 const BACKEND_POOL = [
   'https://ezehcut.onrender.com', 
@@ -19,6 +19,7 @@ export default function App() {
   const [status, setStatus] = useState('');
   const [processedBlobUrl, setProcessedBlobUrl] = useState(null);
   const [error, setError] = useState(null);
+  const [debugLog, setDebugLog] = useState(''); // Aviso de diagnóstico real
   const [seconds, setSeconds] = useState(0);
   const [serverStatus, setServerStatus] = useState(new Array(8).fill('idle'));
   const timerRef = useRef(null);
@@ -39,18 +40,19 @@ export default function App() {
     setIsProcessing(true);
     setProcessedBlobUrl(null);
     setError(null);
+    setDebugLog('Iniciando handshake con nodos...');
     setSeconds(0);
     
     try {
-      setStatus('ATACANDO ARCHIVO...');
       const arrayBuffer = await file.arrayBuffer();
-      const chunkSize = 10 * 1024 * 1024; // 10MB para aprovechar los 4GB de RAM total
+      const chunkSize = 2 * 1024 * 1024; // 2MB para no asfixiar la RAM
       const totalChunks = Math.ceil(arrayBuffer.byteLength / chunkSize);
       const results = new Array(totalChunks);
       let completedChunks = 0;
 
       const queue = [...Array(totalChunks).keys()];
-      const runners = Array(2).fill(null).map(async () => {
+      
+      const runners = Array(4).fill(null).map(async (_, rIdx) => {
         while (queue.length > 0) {
           const chunkIdx = queue.shift();
           const serverIdx = chunkIdx % BACKEND_POOL.length;
@@ -65,8 +67,27 @@ export default function App() {
           const formData = new FormData();
           formData.append('file', chunkBlob, 'chunk.mp3');
 
+          // CONTROL DE TIMEOUT: Si un nodo tarda más de 25s, avisamos el problema
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => {
+            controller.abort();
+            setDebugLog(`⚠️ Nodo ${serverIdx + 1} lento. Posible saturación de RAM en Render.`);
+          }, 25000);
+
           try {
-            const response = await fetch(`${BACKEND_POOL[serverIdx]}/process-audio`, { method: 'POST', body: formData });
+            const response = await fetch(`${BACKEND_POOL[serverIdx]}/process-audio`, { 
+              method: 'POST', 
+              body: formData,
+              signal: controller.signal 
+            });
+            
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                setDebugLog(`❌ Error 500 en Nodo ${serverIdx + 1}. Reiniciando bloque...`);
+                throw new Error();
+            }
+
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let audioPart = '';
@@ -88,8 +109,10 @@ export default function App() {
             completedChunks++;
             setProgress(Math.round((completedChunks / totalChunks) * 100));
             setStatus(`LIMPIANDO: ${completedChunks}/${totalChunks}`);
+            setDebugLog(`✅ Bloque ${chunkIdx + 1} procesado con éxito.`);
           } catch (e) {
-            queue.push(chunkIdx);
+            setDebugLog(`🔄 Reintentando bloque ${chunkIdx + 1} en otro nodo disponible...`);
+            queue.push(chunkIdx); 
           } finally {
             setServerStatus(prev => {
               const next = [...prev];
@@ -101,7 +124,7 @@ export default function App() {
       });
 
       await Promise.all(runners);
-      setStatus('ENSAMBLANDO MASTER...');
+      setStatus('ENSAMBLANDO...');
       
       const finalArray = new Uint8Array(results.reduce((acc, curr) => acc + (curr ? curr.length : 0), 0));
       let offset = 0;
@@ -110,70 +133,74 @@ export default function App() {
       setProcessedBlobUrl(URL.createObjectURL(new Blob([finalArray], { type: 'audio/mpeg' })));
       setIsProcessing(false);
     } catch (err) {
-      setError("ERROR DE CONEXIÓN.");
+      setError("COLAPSO DEL ENJAMBRE. Render Free ha limitado la CPU.");
       setIsProcessing(false);
     }
   };
 
   return (
     <div className="min-h-screen bg-black text-white p-6 flex flex-col items-center justify-center font-sans uppercase">
-      <div className="w-full max-w-2xl bg-zinc-950 border-2 border-red-600/40 rounded-[3rem] p-12 shadow-[0_0_60px_rgba(220,38,38,0.15)] relative">
-        <div className="flex justify-between items-start mb-12">
+      <div className="w-full max-w-2xl bg-zinc-950 border-2 border-red-600/50 rounded-[3rem] p-10 shadow-2xl relative">
+        <div className="flex justify-between items-start mb-10">
           <div className="flex items-center gap-3">
-            <Zap className="text-red-600 animate-pulse" size={32} />
-            <h1 className="text-4xl font-black italic tracking-tighter">EZEHCUT <span className="text-red-600">ULTRA</span></h1>
+            <Activity className="text-red-600 animate-pulse" size={32} />
+            <h1 className="text-4xl font-black italic tracking-tighter">EZEHCUT <span className="text-red-600">DEBUG</span></h1>
           </div>
-          <div className="flex flex-col items-end gap-1">
-             <div className="bg-red-600 px-3 py-1 rounded-full text-[10px] font-black italic shadow-[0_0_10px_red]">ALWAYS ACTIVE</div>
-             <div className="flex items-center gap-1 text-green-500 text-[9px] font-bold tracking-widest"><ShieldCheck size={10}/> 8 NODOS OK</div>
+          <div className="text-right">
+             <div className="bg-red-600 px-3 py-1 rounded-full text-[10px] font-black italic">DIAGNOSTIC MODE</div>
+             <div className="text-green-500 text-[9px] font-bold mt-2 tracking-widest">CRON-JOBS: ACTIVE</div>
           </div>
         </div>
 
+        {/* MONITOR DE AVISOS TÉCNICOS */}
+        {isProcessing && (
+          <div className="mb-6 p-4 bg-red-900/10 border border-red-900/30 rounded-2xl flex items-center gap-3 animate-pulse">
+            <WifiOff size={16} className="text-red-500" />
+            <span className="text-[10px] font-bold text-red-400 tracking-wider">LOG DE SISTEMA: {debugLog}</span>
+          </div>
+        )}
+
         <div className="space-y-8">
           {!isProcessing && !processedBlobUrl && (
-            <label className="border-2 border-dashed border-zinc-900 hover:border-red-600 rounded-[2.5rem] p-24 flex flex-col items-center justify-center cursor-pointer transition-all bg-zinc-900/10 group">
-              <Upload className="w-16 h-16 mb-4 text-zinc-800 group-hover:text-red-600 group-hover:-translate-y-2 transition-all" />
-              <p className="text-zinc-600 font-black tracking-widest text-xs">SOLTAR ARCHIVO AQUÍ</p>
+            <label className="border-2 border-dashed border-zinc-900 hover:border-red-600 rounded-[2.5rem] p-24 flex flex-col items-center justify-center cursor-pointer transition-all bg-zinc-900/5 group">
+              <Upload className="w-16 h-16 mb-4 text-zinc-800 group-hover:text-red-600 transition-all" />
+              <p className="text-zinc-600 font-black text-xs">LANZAR OBJETIVO</p>
               <input type="file" className="hidden" onChange={(e) => setFile(e.target.files[0])} />
             </label>
           )}
 
           {isProcessing && (
-            <div className="space-y-10 animate-in fade-in">
+            <div className="space-y-8">
               <div className="grid grid-cols-8 gap-2">
                 {serverStatus.map((s, i) => (
-                  <div key={i} className={`h-8 rounded-lg border flex items-center justify-center transition-all ${s === 'working' ? 'bg-red-600 border-red-400 shadow-[0_0_10px_red]' : 'bg-zinc-900 border-zinc-800 opacity-20'}`}>
+                  <div key={i} className={`h-8 rounded-lg border flex items-center justify-center transition-all ${s === 'working' ? 'bg-red-600 border-red-400' : 'bg-zinc-900 border-zinc-800 opacity-20'}`}>
                     <Cpu size={12} className={s === 'working' ? 'text-white' : 'text-zinc-800'} />
                   </div>
                 ))}
               </div>
-              <div className="space-y-4">
-                <div className="flex justify-between font-black text-[10px] text-red-600 tracking-[0.3em] italic">
-                  <span>{status}</span>
-                  <span>{formatTime(seconds)}</span>
+              <div className="space-y-4 text-center">
+                <div className="w-full bg-zinc-900 h-12 rounded-full overflow-hidden p-2 border border-zinc-800">
+                  <div className="bg-red-600 h-full rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
                 </div>
-                <div className="w-full bg-zinc-900 h-8 rounded-full overflow-hidden p-1.5 border border-zinc-800">
-                  <div className="bg-red-600 h-full rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
-                </div>
-                <div className="text-8xl font-black text-center tracking-tighter italic">{progress}%</div>
+                <div className="text-9xl font-black italic">{progress}%</div>
+                <div className="text-zinc-500 text-xs font-mono">{formatTime(seconds)}</div>
               </div>
             </div>
           )}
 
           {file && !isProcessing && !processedBlobUrl && (
-            <button onClick={processAudio} className="w-full py-8 bg-red-600 hover:bg-red-700 text-white font-black rounded-[2rem] text-3xl italic shadow-2xl active:scale-95 transition-all">
-              TRITURAR SILENCIOS
+            <button onClick={processAudio} className="w-full py-8 bg-red-600 hover:bg-red-700 text-white font-black rounded-[2rem] text-3xl italic shadow-2xl transition-all">
+              EJECUTAR LIMPIEZA
             </button>
           )}
 
           {processedBlobUrl && (
             <div className="text-center space-y-10 py-4 animate-in zoom-in-95">
               <CheckCircle2 className="mx-auto text-green-500" size={80}/>
-              <h3 className="text-4xl font-black italic tracking-tighter">MISIÓN COMPLETADA</h3>
-              <a href={processedBlobUrl} download={`EzehCut_Ultra_${file?.name}`} className="flex items-center justify-center gap-4 w-full py-8 bg-white text-black font-black rounded-3xl text-2xl shadow-2xl hover:bg-zinc-200 transition-all">
-                <Download size={28} /> DESCARGAR MASTER
+              <a href={processedBlobUrl} download={`EzehCut_Master_${file?.name}`} className="flex items-center justify-center gap-4 w-full py-8 bg-white text-black font-black rounded-3xl text-2xl shadow-2xl">
+                <Download size={28} /> DESCARGAR RESULTADO
               </a>
-              <button onClick={() => {setFile(null); setProcessedBlobUrl(null); setProgress(0); setSeconds(0);}} className="text-zinc-600 text-xs font-black underline decoration-red-600 underline-offset-8">PROCESAR OTRO</button>
+              <button onClick={() => {setFile(null); setProcessedBlobUrl(null); setProgress(0); setSeconds(0);}} className="text-zinc-600 text-xs font-black underline decoration-red-600 underline-offset-8">NUEVA MISIÓN</button>
             </div>
           )}
         </div>
