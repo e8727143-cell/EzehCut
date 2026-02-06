@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Estilos globales extra para asegurar el look EZEHCUT */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0a0a0a;
+}
