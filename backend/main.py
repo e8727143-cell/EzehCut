@@ -1,12 +1,11 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydub import AudioSegment
-from pydub.silence import split_on_silence
-import io
-import json
+import os
+import uuid
 import asyncio
-import base64
+import json
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 
@@ -17,50 +16,71 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Carpeta temporal para descargas
+TEMP_DIR = "/tmp/ezehcut_files"
+if not os.path.exists(TEMP_DIR):
+    os.makedirs(TEMP_DIR)
+
+def clean_file(path: str):
+    """Elimina el archivo después de 10 minutos para ahorrar espacio."""
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except:
+        pass
+
 @app.post("/process-audio")
-async def process_audio(file: UploadFile = File(...)):
+async def process_audio(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    file_id = str(uuid.uuid4())
+    input_path = os.path.join(TEMP_DIR, f"in_{file_id}_{file.filename}")
+    output_filename = f"EzehCut_{file.filename}.mp3"
+    output_path = os.path.join(TEMP_DIR, f"out_{file_id}.mp3")
+
     async def event_generator():
         try:
-            # 1. Inicio
-            yield f"data: {json.dumps({'status': 'Cargando archivo a memoria...', 'progress': 5})}\n\n"
-            content = await file.read()
-            audio = AudioSegment.from_file(io.BytesIO(content))
+            yield f"data: {json.dumps({'status': 'Recibiendo señal...', 'progress': 10})}\n\n"
             
-            ten_minutes = 10 * 60 * 1000
-            audio_length = len(audio)
-            num_chunks = (audio_length // ten_minutes) + 1
-            combined = AudioSegment.empty()
+            with open(input_path, "wb") as f:
+                f.write(await file.read())
 
-            yield f"data: {json.dumps({'status': f'Audio detectado: {audio_length/60000:.1f} min. Dividiendo en {num_chunks} partes...', 'progress': 10})}\n\n"
+            yield f"data: {json.dumps({'status': 'Motor FFmpeg iniciado (Alta Velocidad)...', 'progress': 30})}\n\n"
 
-            # 2. Procesamiento por partes
-            for i in range(0, audio_length, ten_minutes):
-                chunk_idx = (i // ten_minutes) + 1
-                progress = 10 + int((chunk_idx / num_chunks) * 70)
-                
-                yield f"data: {json.dumps({'status': f'Quitando silencios de Parte {chunk_idx}/{num_chunks}...', 'progress': progress})}\n\n"
-                
-                end = min(i + ten_minutes, audio_length)
-                current_chunk = audio[i:end]
-                
-                # Procesar silencio (Lógica EzehCUT)
-                processed = split_on_silence(current_chunk, min_silence_len=700, silence_thresh=-35, keep_silence=200)
-                
-                for p in processed:
-                    combined += p
-                
-                await asyncio.sleep(0.1) # Evitar bloqueo de event loop
+            # COMANDO MAESTRO: Usa el filtro nativo de FFmpeg (C-code) en lugar de Python
+            # Esto es extremadamente rápido y eficiente en RAM.
+            cmd = [
+                "ffmpeg", "-i", input_path,
+                "-af", "silenceremove=start_periods=1:start_threshold=-35dB:stop_periods=-1:stop_threshold=-35dB:stop_duration=0.7",
+                "-b:a", "192k", output_path, "-y"
+            ]
 
-            # 3. Finalización
-            yield f"data: {json.dumps({'status': 'Uniendo partes y masterizando...', 'progress': 90})}\n\n"
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
             
-            output_buffer = io.BytesIO()
-            combined.export(output_buffer, format="mp3", bitrate="192k")
-            audio_64 = base64.b64encode(output_buffer.getvalue()).decode()
+            yield f"data: {json.dumps({'status': 'Eliminando silencios en tiempo real...', 'progress': 60})}\n\n"
+            await process.communicate()
 
-            yield f"data: {json.dumps({'status': '¡Proceso completado con éxito!', 'progress': 100, 'audio': audio_64})}\n\n"
+            if process.returncode != 0:
+                raise Exception("FFmpeg falló al procesar el audio")
+
+            yield f"data: {json.dumps({'status': 'Finalizando masterización...', 'progress': 90})}\n\n"
+            
+            # Generar link de descarga en lugar de enviar el archivo por texto
+            download_link = f"/download/{file_id}"
+            yield f"data: {json.dumps({'status': '¡LISTO!', 'progress': 100, 'download_id': file_id})}\n\n"
+
+            # Programar limpieza
+            background_tasks.add_task(clean_file, input_path)
+            background_tasks.add_task(clean_file, output_path)
 
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.get("/download/{file_id}")
+async def download_file(file_id: str):
+    path = os.path.join(TEMP_DIR, f"out_{file_id}.mp3")
+    if os.path.exists(path):
+        return FileResponse(path, media_type="audio/mpeg", filename=f"audio_limpio_{file_id}.mp3")
+    raise HTTPException(status_code=404, detail="Archivo expirado o no encontrado")
