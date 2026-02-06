@@ -1,0 +1,5 @@
+{
+  "name": "EZEHCUT WEB",
+  "description": "Modern web interface for silence removal from audio files using FastAPI and React.",
+  "requestFramePermissions": []
+}
