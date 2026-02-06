@@ -1,249 +1,144 @@
-import React, { useState, useEffect } from 'react';
-import { DropZone } from './components/DropZone';
-import { Header } from './components/Header';
-import { Footer } from './components/Footer';
-import { Download, AlertCircle, Loader2, Save, X, Server } from 'lucide-react';
+import React, { useState } from 'react';
+import { Download, AlertCircle, Loader2, Save, X, Server, Scissors, Upload } from 'lucide-react';
+
+// URL de Render (Backup si no hay variable de entorno)
+const FALLBACK_API_URL = 'https://ezehcut.onrender.com';
 
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processedUrl, setProcessedUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
-  // Configuration State
   const [showSettings, setShowSettings] = useState(false);
-  
-  // Determine initial API URL
+
   const getInitialUrl = () => {
-    // 1. Check LocalStorage (User Override)
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('ezehcut_api_url');
       if (saved) return saved;
     }
-    
-    // 2. Check Environment Variables (Vercel/Vite/Next)
-    // We handle multiple naming conventions for maximum compatibility
-    const envUrl = 
-      (import.meta as any).env?.VITE_API_URL || 
-      (import.meta as any).env?.NEXT_PUBLIC_API_URL || 
-      (process as any).env?.NEXT_PUBLIC_API_URL ||
-      (process as any).env?.REACT_APP_API_URL;
-
-    if (envUrl) return envUrl;
-
-    // 3. Fallback to Localhost
-    return 'http://127.0.0.1:8000';
+    return import.meta.env.VITE_API_URL || FALLBACK_API_URL;
   };
 
   const [apiUrl, setApiUrl] = useState(getInitialUrl());
 
   const handleSaveSettings = (newUrl: string) => {
-    // Remove trailing slash if present
     const cleanedUrl = newUrl.replace(/\/$/, '');
     setApiUrl(cleanedUrl);
     localStorage.setItem('ezehcut_api_url', cleanedUrl);
     setShowSettings(false);
-    setError(null);
-  };
-
-  const handleFileSelect = (selectedFile: File) => {
-    setFile(selectedFile);
-    setProcessedUrl(null);
-    setError(null);
   };
 
   const processAudio = async () => {
     if (!file) return;
-
     setIsProcessing(true);
     setError(null);
+    setProcessedUrl(null);
 
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-      const baseUrl = apiUrl.replace(/\/$/, '');
-      console.log(`Sending request to: ${baseUrl}/process-audio`);
-
-      const response = await fetch(`${baseUrl}/process-audio`, {
+      const response = await fetch(`${apiUrl}/process-audio`, {
         method: 'POST',
         body: formData,
       });
 
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.detail || `Server error: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`Error: ${response.status}`);
 
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       setProcessedUrl(url);
     } catch (err: any) {
-      console.error(err);
-      let msg = err.message;
-      if (msg === "Failed to fetch") {
-        msg = "Connection Refused. Check if the Backend URL is correct and the server is running.";
-      }
-      setError(msg);
+      setError(err.message === "Failed to fetch" 
+        ? "No se pudo conectar con el servidor de Render. Despertando servidor..." 
+        : err.message);
     } finally {
       setIsProcessing(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-neutral-950 text-neutral-200 font-sans selection:bg-red-900 selection:text-white relative">
-      <Header onOpenSettings={() => setShowSettings(true)} />
-
-      <main className="flex-grow flex flex-col items-center justify-center p-6 sm:p-12 relative z-10">
-        <div className="w-full max-w-2xl space-y-8">
-          
-          <div className="text-center space-y-2">
-            <h2 className="text-3xl font-bold tracking-tighter text-white">
-              Silence <span className="text-red-600">Remover</span>
-            </h2>
-            <p className="text-neutral-500">
-              Upload your audio to automatically strip silence (-35dB threshold).
-            </p>
+    <div className="min-h-screen bg-neutral-950 text-white font-sans p-6 flex flex-col items-center justify-center">
+      <div className="w-full max-w-xl bg-neutral-900 border border-neutral-800 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
+        {/* Decoración Roja */}
+        <div className="absolute -top-24 -right-24 w-48 h-48 bg-red-600/20 blur-[100px] rounded-full" />
+        
+        <div className="relative z-10">
+          <div className="flex justify-between items-center mb-10">
+            <h1 className="text-4xl font-black tracking-tighter text-red-600">EZEHCUT<span className="text-white">WEB</span></h1>
+            <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-neutral-800 rounded-full transition-colors">
+              <Server size={20} className="text-neutral-500" />
+            </button>
           </div>
 
-          <div className="bg-neutral-900/50 border border-neutral-800 rounded-2xl p-6 shadow-2xl backdrop-blur-sm">
-            <DropZone onFileSelect={handleFileSelect} disabled={isProcessing} />
+          <div className="space-y-6">
+            <label className="group border-2 border-dashed border-neutral-800 hover:border-red-600 rounded-2xl p-12 flex flex-col items-center justify-center cursor-pointer transition-all bg-neutral-950/50">
+              <Upload className="w-10 h-10 mb-4 text-neutral-600 group-hover:text-red-500 transition-colors" />
+              <p className="text-neutral-400 font-medium text-center">
+                {file ? file.name : 'Suelta tu audio aquí o haz clic'}
+              </p>
+              <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} accept="audio/*" />
+            </label>
 
-            {file && (
-              <div className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <div className="flex items-center justify-between p-4 bg-neutral-900 border border-neutral-800 rounded-lg">
-                  <div className="truncate pr-4">
-                    <p className="font-medium text-neutral-200 truncate">{file.name}</p>
-                    <p className="text-xs text-neutral-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
-                  </div>
-                  <button
-                    onClick={() => setFile(null)}
-                    disabled={isProcessing}
-                    className="text-xs text-red-500 hover:text-red-400 disabled:opacity-50 font-mono"
-                  >
-                    [REMOVE]
-                  </button>
-                </div>
-
-                {!processedUrl && (
-                  <button
-                    onClick={processAudio}
-                    disabled={isProcessing}
-                    className="w-full py-4 bg-red-600 hover:bg-red-700 disabled:bg-neutral-800 disabled:text-neutral-500 text-white font-bold rounded-lg transition-all transform active:scale-[0.98] flex items-center justify-center gap-2 group shadow-[0_0_20px_rgba(220,38,38,0.3)] hover:shadow-[0_0_30px_rgba(220,38,38,0.5)]"
-                  >
-                    {isProcessing ? (
-                      <>
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        PROCESSING SIGNAL...
-                      </>
-                    ) : (
-                      <>
-                        INITIALIZE PROCESSING
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
+            {file && !processedUrl && (
+              <button 
+                onClick={processAudio}
+                disabled={isProcessing}
+                className="w-full py-4 bg-red-600 hover:bg-red-700 disabled:bg-neutral-800 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-3 shadow-lg shadow-red-600/20"
+              >
+                {isProcessing ? <Loader2 className="animate-spin" /> : <Scissors size={20} />}
+                {isProcessing ? 'PROCESANDO SEÑAL...' : 'INICIAR LIMPIEZA'}
+              </button>
             )}
 
             {error && (
-              <div className="mt-6 p-4 bg-red-950/30 border border-red-900/50 rounded-lg flex flex-col items-start gap-2 text-red-400 animate-in fade-in">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5 shrink-0" />
-                  <p className="font-bold">Processing Failed</p>
-                </div>
-                <p className="text-sm pl-7">{error}</p>
-                <div className="pl-7 mt-1">
-                  <button 
-                    onClick={() => setShowSettings(true)}
-                    className="text-xs underline hover:text-white"
-                  >
-                    Check Server Configuration
-                  </button>
-                </div>
+              <div className="p-4 bg-red-900/20 border border-red-900/50 rounded-xl text-red-400 text-sm flex gap-3 items-center">
+                <AlertCircle size={20} className="shrink-0" />
+                {error}
               </div>
             )}
 
             {processedUrl && (
-              <div className="mt-6 text-center animate-in fade-in zoom-in-95 duration-500">
-                <div className="p-6 bg-neutral-950 border border-green-900/30 rounded-xl relative overflow-hidden group">
-                  <div className="absolute inset-0 bg-green-900/5 group-hover:bg-green-900/10 transition-colors" />
-                  <h3 className="text-green-500 font-bold mb-4 relative z-10 flex items-center justify-center gap-2">
-                     PROCESS COMPLETE
-                  </h3>
-                  <a
-                    href={processedUrl}
-                    download={`processed_${file?.name || 'audio.mp3'}`}
-                    className="inline-flex items-center gap-2 px-8 py-3 bg-green-600 hover:bg-green-500 text-black font-bold rounded-full transition-all hover:scale-105 shadow-[0_0_20px_rgba(22,163,74,0.3)]"
+              <div className="space-y-4 animate-in fade-in zoom-in-95">
+                <div className="p-6 bg-black rounded-2xl border border-green-900/30 text-center">
+                  <p className="text-green-500 font-bold mb-4">¡AUDIO LIMPIO!</p>
+                  <a 
+                    href={processedUrl} 
+                    download={`EzehCut_${file?.name}`}
+                    className="flex items-center justify-center gap-2 w-full py-4 bg-green-600 hover:bg-green-500 text-black font-extrabold rounded-xl transition-transform active:scale-95"
                   >
-                    <Download className="w-5 h-5" />
-                    DOWNLOAD RESULT
+                    <Download size={20} /> DESCARGAR RESULTADO
                   </a>
-                  <audio controls src={processedUrl} className="w-full mt-6 opacity-80" />
                 </div>
-                <button 
-                  onClick={() => {
-                    setFile(null);
-                    setProcessedUrl(null);
-                  }}
-                  className="mt-4 text-sm text-neutral-500 hover:text-white transition-colors"
-                >
-                  Process another file
+                <button onClick={() => {setFile(null); setProcessedUrl(null);}} className="w-full text-neutral-500 text-sm hover:text-white underline">
+                  Procesar otro archivo
                 </button>
               </div>
             )}
           </div>
         </div>
-      </main>
+      </div>
 
-      {/* Settings Modal */}
+      {/* Modal de Configuración */}
       {showSettings && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-xl p-6 shadow-2xl">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-bold flex items-center gap-2">
-                <Server className="w-5 h-5 text-red-500" />
-                Backend Configuration
-              </h3>
-              <button 
-                onClick={() => setShowSettings(false)}
-                className="text-neutral-500 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-900 border border-neutral-800 p-6 rounded-2xl w-full max-w-sm">
+            <div className="flex justify-between mb-4">
+              <h3 className="font-bold">Configuración API</h3>
+              <button onClick={() => setShowSettings(false)}><X size={20} /></button>
             </div>
-
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-xs font-mono text-neutral-400 uppercase">API Endpoint URL</label>
-                <input 
-                  type="text" 
-                  value={apiUrl}
-                  onChange={(e) => setApiUrl(e.target.value)}
-                  placeholder="https://your-app.onrender.com"
-                  className="w-full bg-black border border-neutral-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-red-600 transition-colors font-mono"
-                />
-                <p className="text-[10px] text-neutral-500">
-                  Current: {apiUrl}
-                </p>
-                <p className="text-[10px] text-neutral-500">
-                  Set <code>NEXT_PUBLIC_API_URL</code> in Vercel to configure this automatically.
-                </p>
-              </div>
-
-              <button 
-                onClick={() => handleSaveSettings(apiUrl)}
-                className="w-full py-3 bg-neutral-800 hover:bg-neutral-700 text-white font-medium rounded-lg flex items-center justify-center gap-2 transition-colors"
-              >
-                <Save className="w-4 h-4" />
-                Save Configuration
-              </button>
-            </div>
+            <input 
+              type="text" 
+              value={apiUrl} 
+              onChange={(e) => setApiUrl(e.target.value)}
+              className="w-full bg-black border border-neutral-700 rounded-lg p-3 text-sm font-mono mb-4 focus:border-red-600 outline-none"
+            />
+            <button onClick={() => handleSaveSettings(apiUrl)} className="w-full bg-white text-black py-2 rounded-lg font-bold flex items-center justify-center gap-2">
+              <Save size={18} /> Guardar
+            </button>
           </div>
         </div>
       )}
-
-      <Footer />
     </div>
   );
 }
